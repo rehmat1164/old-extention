@@ -1,0 +1,4 @@
+# Chrome test/run profiles created while debugging the extension
+.chrome-mete-run-profile/
+.chrome-mete-run-profile-debug/
+.chrome-mete-run-profile-debug2/

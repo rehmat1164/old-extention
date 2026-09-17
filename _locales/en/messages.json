@@ -1,0 +1,10 @@
+{
+   "extDescription": {
+      "description": "A short description of the extension.",
+      "message": "Mete Run automates bulk video creation workflows on Meta AI."
+   },
+   "extName": {
+      "description": "The name of the extension.",
+      "message": "Mete Run"
+   }
+}

@@ -1,0 +1,145 @@
+{
+  "Home A": {
+    "tag": "a",
+    "aria-label": "Home",
+    "selector": "a[aria-label=\"Home\"]",
+    "disabled": false,
+    "count": 1
+  },
+  "Toggle Sidebar Button": {
+    "tag": "button",
+    "aria-label": "Toggle Sidebar",
+    "selector": "button[aria-label=\"Toggle Sidebar\"]",
+    "disabled": false,
+    "count": 1
+  },
+  "Search Ctrl+k Button": {
+    "tag": "button",
+    "aria-label": null,
+    "selector": "button:text(\"Search Ctrl+K\")",
+    "disabled": false,
+    "count": 1
+  },
+  "More Options Button": {
+    "tag": "button",
+    "aria-label": "More options",
+    "selector": "button[aria-label=\"More options\"]",
+    "disabled": false,
+    "count": 42,
+    "note": "Multiple matching elements"
+  },
+  "Cancel Button": {
+    "tag": "button",
+    "aria-label": "Cancel",
+    "selector": "button[aria-label=\"Cancel\"]",
+    "disabled": false,
+    "count": 1
+  },
+  "Rename Button": {
+    "tag": "button",
+    "aria-label": "Rename",
+    "selector": "button[aria-label=\"Rename\"]",
+    "disabled": false,
+    "count": 1
+  },
+  "Animating A Mysterious Cabinet Button": {
+    "tag": "button",
+    "aria-label": null,
+    "selector": "button:text(\"Animating a mysterious cabinet\")",
+    "disabled": false,
+    "count": 1
+  },
+  "Share Button": {
+    "tag": "button",
+    "aria-label": "Share",
+    "selector": "button[aria-label=\"Share\"]",
+    "disabled": false,
+    "count": 1
+  },
+  "Menu Button": {
+    "tag": "button",
+    "aria-label": "Menu",
+    "selector": "button[aria-label=\"Menu\"]",
+    "disabled": false,
+    "count": 1
+  },
+  "Thought For 15.4 Sec Button": {
+    "tag": "button",
+    "aria-label": null,
+    "selector": "button:text(\"Thought for 15.4 sec\")",
+    "disabled": false,
+    "count": 1
+  },
+  "View Media Button": {
+    "tag": "button",
+    "aria-label": "View media",
+    "selector": "button[aria-label=\"View media\"]",
+    "disabled": false,
+    "count": 4,
+    "note": "Multiple matching elements"
+  },
+  "Download Button": {
+    "tag": "button",
+    "aria-label": "Download",
+    "selector": "button[aria-label=\"Download\"]",
+    "disabled": false,
+    "count": 4,
+    "note": "Multiple matching elements"
+  },
+  "Copy Response Button": {
+    "tag": "button",
+    "aria-label": "Copy response",
+    "selector": "button[aria-label=\"Copy response\"]",
+    "disabled": false,
+    "count": 1
+  },
+  "Like This Response Button": {
+    "tag": "button",
+    "aria-label": "Like this response",
+    "selector": "button[aria-label=\"Like this response\"]",
+    "disabled": false,
+    "count": 1
+  },
+  "Dislike This Response Button": {
+    "tag": "button",
+    "aria-label": "Dislike this response",
+    "selector": "button[aria-label=\"Dislike this response\"]",
+    "disabled": false,
+    "count": 1
+  },
+  "Scroll To Bottom Button": {
+    "tag": "button",
+    "aria-label": "Scroll to bottom",
+    "selector": "button[aria-label=\"Scroll to bottom\"]",
+    "disabled": false,
+    "count": 1
+  },
+  "Add Attachment Button": {
+    "tag": "button",
+    "aria-label": "Add attachment",
+    "selector": "button[aria-label=\"Add attachment\"]",
+    "disabled": false,
+    "count": 1
+  },
+  "Video Combobox": {
+    "tag": "button",
+    "aria-label": null,
+    "selector": "button[role=\"combobox\"]:text(\"Video\")",
+    "disabled": false,
+    "count": 1
+  },
+  "Animate Button": {
+    "tag": "button",
+    "aria-label": null,
+    "selector": "button:text(\"Animate\")",
+    "disabled": true,
+    "count": 1
+  },
+  "Notifications Alt+t Section": {
+    "tag": "section",
+    "aria-label": "Notifications alt+T",
+    "selector": "section[aria-label=\"Notifications alt+T\"]",
+    "disabled": false,
+    "count": 1
+  }
+}
