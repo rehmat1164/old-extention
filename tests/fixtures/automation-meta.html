@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Local Meta DOM fixture</title>
-<style>img{width:160px;height:160px}textarea{width:500px;height:130px}article,figure{display:block}figure{margin:8px}button{padding:8px}[data-scroll-container]{height:600px;overflow:auto}</style></head>
+<style>img{width:160px;height:160px}[contenteditable]{width:500px;min-height:130px;white-space:pre-wrap}article,figure{display:block}figure{margin:8px}button{padding:8px}[data-scroll-container]{height:600px;overflow:auto}</style></head>
 <body>
 <aside><img alt="Image 1" src="/sidebar.png"></aside>
 <main><div data-scroll-container style="container:chat-scroller / inline-size"></div>
-<form><textarea data-testid="composer-input" aria-label="Message"></textarea><button type="button" aria-label="Send">Send</button></form></main>
+<form><div data-testid="composer-input" role="textbox" aria-label="Message" contenteditable="true"><p><br></p></div><button type="button" aria-label="Send">Send</button></form></main>
 <script>
   window.fixture = { submissions: 0, labels: true, count: 2, request: null };
   const realMedia = globalThis.meteFixtureOptions?.realMedia === true;
@@ -14,9 +14,9 @@
   });
   document.querySelector('[aria-label="Send"]').onclick = () => {
     fixture.submissions++;
-    const editor = document.querySelector('textarea');
-    fixture.request = editor.value;
-    editor.value = '';
+    const editor = document.querySelector('[data-testid="composer-input"]');
+    fixture.request = editor.innerText;
+    editor.replaceChildren();
     history.pushState({}, '', '/prompt/fixture-chat');
     const scope = document.querySelector('[data-scroll-container]');
     const user = document.createElement('div');

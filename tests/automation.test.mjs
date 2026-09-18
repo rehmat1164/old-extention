@@ -79,7 +79,7 @@ async function runVideo(page, index) {
   }, index);
 }
 
-test('Meta scopes the new chat, submits the batch once, and maps reversed image arrival by labels', async t => {
+test('Meta rich-text composer preserves multiline prompts, submits once, and maps reversed arrivals by labels', async t => {
   const page = await pageFor('meta'); t.after(() => page.close());
   const result = await page.evaluate(async () => {
     const checkpoints = [];
@@ -88,10 +88,58 @@ test('Meta scopes the new chat, submits the batch once, and maps reversed image 
     return { result, fixture, checkpoints };
   });
   assert.equal(result.fixture.submissions, 1);
+  assert.equal(result.fixture.request.replace(/\s+/g, ' ').trim(), 'Image 1: A green valley Image 2: A blue lake Generate two separate images.');
   assert.equal(result.result.url, 'https://www.meta.ai/prompt/fixture-chat');
   assert.deepEqual(result.result.images.map(item => [item.index, new URL(item.url).pathname]), [[1, '/output-1.png'], [2, '/output-2.png']]);
   assert.ok(result.checkpoints.some(item => item[0] === 'meta:submitting'));
   assert.equal(result.result.images.some(item => item.url.includes('sidebar')), false);
+});
+
+test('rich-text paste updates a controlled editor without joining prompt lines', async t => {
+  const page = await pageFor('meta'); t.after(() => page.close());
+  const result = await page.evaluate(async () => {
+    const editor = document.querySelector('[data-testid="composer-input"]');
+    let accepted = '';
+    let pastes = 0;
+    editor.addEventListener('paste', event => {
+      event.preventDefault();
+      accepted = event.clipboardData.getData('text/plain');
+      pastes++;
+      editor.replaceChildren(...accepted.split('\n').map(line => {
+        const paragraph = document.createElement('p');
+        paragraph.textContent = line || '\u00a0';
+        return paragraph;
+      }));
+    });
+    editor.addEventListener('input', event => {
+      if (event.inputType === 'insertText' && /\n/.test(event.data || '')) editor.textContent = event.data.replace(/\n/g, '');
+    });
+    const request = 'Create images in 9:16.\n\nImage 1:\nmake an apple\n\nImage 2:\nmake a lake';
+    await MeteAutomation.dom.fillEditor(editor, request, { signal: new AbortController().signal });
+    return { accepted, pastes, request, rendered: editor.innerText };
+  });
+  assert.equal(result.pastes, 1);
+  assert.equal(result.accepted, result.request);
+  assert.equal(result.rendered.replace(/\s+/g, ' ').trim(), result.request.replace(/\s+/g, ' ').trim());
+});
+
+test('rich-text verification still rejects truncated or changed prompt words before submission', async t => {
+  const page = await pageFor('meta'); t.after(() => page.close());
+  const result = await page.evaluate(async () => {
+    const editor = document.querySelector('[data-testid="composer-input"]');
+    editor.addEventListener('paste', event => { event.preventDefault(); editor.textContent = 'Image 1: wrong subject'; });
+    editor.addEventListener('input', () => { editor.textContent = 'Image 1: wrong subject'; });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1500);
+    try {
+      await MeteAutomation.meta.generate({ request: 'Image 1: make an apple', expected: [{ index: 1, marker: 'Image 1' }] }, {
+        signal: controller.signal, async checkpoint() {},
+      });
+      return { accepted: true, submissions: fixture.submissions };
+    } catch { return { accepted: false, submissions: fixture.submissions }; }
+    finally { clearTimeout(timer); }
+  });
+  assert.deepEqual(result, { accepted: false, submissions: 0 });
 });
 
 test('Meta fails safely instead of assigning unlabelled batch results by arrival order', async t => {

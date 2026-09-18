@@ -182,6 +182,10 @@
     return (node?.matches('input, textarea') ? node.value : node?.innerText || node?.textContent || '').replace(/\r\n?/g, '\n').trim();
   }
 
+  function normaliseText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
   async function fillEditor(node, value, ctx) {
     checkAbort(ctx.signal);
     if (editorValue(node)) throw error('COMPOSER_NOT_EMPTY', 'The provider composer already contains text. Clear your draft before starting; Mete Run will not overwrite it.');
@@ -197,12 +201,25 @@
       range.selectNodeContents(node);
       selection.removeAllRanges();
       selection.addRange(range);
-      // insertText updates Lexical/React's editing state as well as the DOM.
-      if (!document.execCommand('insertText', false, value)) {
-        throw error('EDITOR_REJECTED', 'The provider editor did not accept the prompt. Nothing was submitted.');
+      // Rich-text editors own paste handling; one multiline insertText can lose line separators.
+      const clipboardData = new DataTransfer();
+      clipboardData.setData('text/plain', value);
+      const handled = !node.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true, composed: true }));
+      if (!handled && !editorValue(node)) {
+        const lines = value.replace(/\r\n?/g, '\n').split('\n');
+        for (let index = 0; index < lines.length; index++) {
+          checkAbort(ctx.signal);
+          if (index && !document.execCommand('insertLineBreak', false)) {
+            throw error('EDITOR_REJECTED', 'The provider editor did not accept a prompt line break. Nothing was submitted.');
+          }
+          if (lines[index] && !document.execCommand('insertText', false, lines[index])) {
+            throw error('EDITOR_REJECTED', 'The provider editor did not accept the prompt. Nothing was submitted.');
+          }
+        }
       }
     }
-    await waitFor(() => editorValue(node) === value.trim(), {
+    // Paragraphs, BRs and non-breaking spaces may render differently; words and their boundaries must match.
+    await waitFor(() => normaliseText(editorValue(node)) === normaliseText(value), {
       signal: ctx.signal, timeout: 10_000, stableFor: 250,
       message: 'The provider editor did not retain the complete prompt. Nothing was submitted.',
     });
@@ -331,7 +348,7 @@
 
   api.dom = Object.freeze({
     controls, ignored, error, checkAbort, providerFor, allowedUrl, mediaKey, text, name, visible, enabled,
-    control, dialog, busy, providerFailure, assertPage, waitFor, click, editorValue, fillEditor, submit,
+    control, dialog, busy, providerFailure, assertPage, waitFor, click, editorValue, normaliseText, fillEditor, submit,
     imageUrl, imageReady, labels, annotate, annotation, sniff, digest, imageFile, boundedMedia,
   });
 })();

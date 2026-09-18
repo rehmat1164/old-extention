@@ -92,10 +92,10 @@
   }
 
   function requestEcho(scope, request) {
-    const wanted = request.replace(/\s+/g, ' ').trim();
+    const wanted = D.normaliseText(request);
     const candidates = [...scope.querySelectorAll(`${user}, article, p, [dir="auto"]`)]
       .filter(node => !node.closest(author) && !node.closest('[contenteditable="true"]'));
-    return candidates.some(node => D.text(node) === wanted);
+    return candidates.some(node => D.normaliseText(node.innerText || node.textContent) === wanted);
   }
 
   async function generate(payload, ctx) {
