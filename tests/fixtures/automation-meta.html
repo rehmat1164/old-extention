@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Local Meta DOM fixture</title>
+<style>img{width:160px;height:160px}textarea{width:500px;height:130px}article,figure{display:block}figure{margin:8px}button{padding:8px}[data-scroll-container]{height:600px;overflow:auto}</style></head>
+<body>
+<aside><img alt="Image 1" src="/sidebar.png"></aside>
+<main><div data-scroll-container style="container:chat-scroller / inline-size"></div>
+<form><textarea data-testid="composer-input" aria-label="Message"></textarea><button type="button" aria-label="Send">Send</button></form></main>
+<script>
+  window.fixture = { submissions: 0, labels: true, count: 2, request: null };
+  const realMedia = globalThis.meteFixtureOptions?.realMedia === true;
+  // Adapter tests control decode state; the unpacked-extension test uses real media.
+  if (!realMedia) Object.defineProperties(HTMLImageElement.prototype, {
+    naturalWidth: { get() { return 1024; } }, naturalHeight: { get() { return 1024; } }, complete: { get() { return true; } },
+  });
+  document.querySelector('[aria-label="Send"]').onclick = () => {
+    fixture.submissions++;
+    const editor = document.querySelector('textarea');
+    fixture.request = editor.value;
+    editor.value = '';
+    history.pushState({}, '', '/prompt/fixture-chat');
+    const scope = document.querySelector('[data-scroll-container]');
+    const user = document.createElement('div');
+    user.setAttribute('data-message-author-role', 'user');
+    user.textContent = fixture.request;
+    scope.append(user);
+    const article = document.createElement('article');
+    article.setAttribute('data-message-author-role', 'assistant');
+    article.setAttribute('aria-busy', 'true');
+    scope.append(article);
+    [2, 1, 3, 4].slice(0, fixture.count).forEach((number, position) => setTimeout(async () => {
+      const figure = document.createElement('figure');
+      const image = document.createElement('img');
+      image.alt = fixture.labels ? `Image ${number}` : 'Generated result';
+      image.setAttribute('data-testid', 'generated-image');
+      if (realMedia) {
+        const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 512;
+        const paint = canvas.getContext('2d'); paint.fillStyle = number === 1 ? '#526ce8' : '#eb9876'; paint.fillRect(0, 0, 512, 512);
+        image.src = URL.createObjectURL(await new Promise(resolve => canvas.toBlob(resolve, 'image/png')));
+      } else image.src = `/output-${number}.png`;
+      figure.append(image);
+      article.append(figure);
+      if (position === fixture.count - 1) article.setAttribute('aria-busy', 'false');
+    }, 50 + position * 80));
+  };
+</script></body></html>

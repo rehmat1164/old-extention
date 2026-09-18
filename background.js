@@ -1,309 +1,146 @@
-// background.js — MV3 Service Worker
-// Keeps download watchdog alive using alarms even when UI is closed
+import { PROVIDERS, providerForUrl } from './js/lib/policy.js';
 
-const SESSION_KEY = 'autoMetaCopy_downloadSession';
-const DONE_KEY    = 'autoMetaCopy_downloadedOutputs';
-const IN_PROGRESS_KEY = 'autoMetaCopy_downloadingOutputs';
-const DOWNLOAD_LOCK_TTL = 5 * 60 * 1000;
+let creatingOffscreen;
+let operationQueue = Promise.resolve();
+const engineUrl = chrome.runtime.getURL('offscreen.html');
+const panelUrl = chrome.runtime.getURL('sidepanel.html');
+const operationTypes = new Set(['ping', 'operation:start', 'operation:status', 'operation:cancel', 'media:read']);
 
-async function acquireDownloadSlot(key) {
-  const owner = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const now = Date.now();
-  const data = await chrome.storage.local.get({ [DONE_KEY]: [], [IN_PROGRESS_KEY]: {} });
-  const done = new Set(Array.isArray(data[DONE_KEY]) ? data[DONE_KEY] : []);
-  if (done.has(key)) return { ok: false, reason: 'already downloaded' };
-  const active = data[IN_PROGRESS_KEY] && typeof data[IN_PROGRESS_KEY] === 'object' ? data[IN_PROGRESS_KEY] : {};
-  Object.keys(active).forEach(k => {
-    if (!active[k]?.at || now - Number(active[k].at) > DOWNLOAD_LOCK_TTL) delete active[k];
-  });
-  if (active[key]) return { ok: false, reason: 'download already in progress' };
-  active[key] = { owner, at: now };
-  await chrome.storage.local.set({ [IN_PROGRESS_KEY]: active });
-  const verify = await chrome.storage.local.get({ [IN_PROGRESS_KEY]: {} });
-  if (verify[IN_PROGRESS_KEY]?.[key]?.owner !== owner) return { ok: false, reason: 'download lock lost' };
-  return { ok: true, key, owner };
+function updateOperations(work) {
+  const pending = operationQueue.then(work);
+  operationQueue = pending.catch(() => {});
+  return pending;
 }
 
-async function releaseDownloadSlot(lock) {
-  if (!lock?.key || !lock.owner) return;
-  const data = await chrome.storage.local.get({ [IN_PROGRESS_KEY]: {} });
-  const active = data[IN_PROGRESS_KEY] && typeof data[IN_PROGRESS_KEY] === 'object' ? data[IN_PROGRESS_KEY] : {};
-  if (active[lock.key]?.owner === lock.owner) {
-    delete active[lock.key];
-    await chrome.storage.local.set({ [IN_PROGRESS_KEY]: active });
-  }
-}
-
-function normalizeAutoDownloadMode(mode) {
-  if (mode === 'afterAllReadyZip' || mode === 'afterAllComplete-zip') return 'afterAllReadyZip';
-  if (mode === 'afterReady' || mode === 'perPromptReady' || mode === 'afterAllComplete' || mode === 'manual') return 'afterReady';
-  return 'afterReady';
-}
-
-function normalizeSrc(src) {
-  return (src || '').split('#')[0].split('?')[0];
-}
-
-function downloadedKey(session, item) {
-  if (!item) return '';
-  return item.signature || `${session?.id || 'session'}|${Number(item.promptIndex)}|${item.type}|${Number(item.position || 1)}|${normalizeSrc(item.src)}`;
-}
-
-function promptExpectedCount(prompt) {
-  return Number(prompt?.expected) || (prompt?.mode === 'image-to-video' ? 1 : 4);
-}
-
-function selectedPositionFor(type, settings, prompt) {
-  const custom = settings?.customSelections?.[prompt?.index];
-  if (custom && custom !== 'auto') return Number(custom);
-  const stored = type === 'image' ? settings.imageGenerationSelect : settings.videoGenerationSelect;
-  if (stored && stored !== 'auto') return Number(stored);
-  return promptExpectedCount(prompt);
-}
-
-function preferredOutputFor(prompt, settings) {
-  const outputs = prompt?.outputs || [];
-  const type = prompt?.mode === 'prompt-to-image' ? 'image' : 'video';
-  const resolved = prompt?.resolvedPosition ? Number(prompt.resolvedPosition) : selectedPositionFor(type, settings, prompt);
-  let item = outputs.find(o => Number(o.position) === resolved && o.src);
-  if (item) return item;
-  const selected = selectedPositionFor(type, settings, prompt);
-  item = outputs.find(o => Number(o.position) === selected && o.src);
-  if (item) return item;
-  const secondary = type === 'video' && settings.secondaryVideoGenerationSelect && settings.secondaryVideoGenerationSelect !== 'auto'
-    ? Number(settings.secondaryVideoGenerationSelect)
-    : promptExpectedCount(prompt);
-  if (Number(secondary) !== Number(selected)) {
-    item = outputs.find(o => Number(o.position) === Number(secondary) && o.src);
-    if (item) return item;
-  }
-  return null;
-}
-
-function selectedComplete(session, settings) {
-  const prompts = session?.prompts || [];
-  return prompts.length > 0 && prompts.every(prompt => {
-    if (['failed', 'timeout', 'unrecoverable'].includes(prompt.status)) return true;
-    return !!preferredOutputFor(prompt, settings);
-  });
-}
-
-function selectedDownloadsComplete(session, settings) {
-  const prompts = session?.prompts || [];
-  return prompts.length > 0 && prompts.every(prompt => {
-    if (['failed', 'timeout', 'unrecoverable'].includes(prompt.status)) return true;
-    const item = preferredOutputFor(prompt, settings);
-    return !!(item?.src && item.downloaded);
-  });
-}
-
-// ── Badge helpers ────────────────────────────────────────────────────────────
-function setBadge(text, color) {
-  chrome.action.setBadgeText({ text: text || '' });
-  if (color) chrome.action.setBadgeBackgroundColor({ color });
-}
-
-// ── Sidepanel toggle ─────────────────────────────────────────────────────────
-chrome.action.onClicked.addListener((tab) => {
-  if (tab.url && tab.url.includes('meta.ai')) {
-    chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_PANEL' })
-      .catch(() => {
-        // Content script not ready yet — try sidePanel as fallback
-        chrome.sidePanel.open({ tabId: tab.id, windowId: tab.windowId }).catch(() => {});
-      });
-  } else if (tab.id) {
-    chrome.sidePanel.open({ tabId: tab.id, windowId: tab.windowId }).catch(() => {});
-  }
-});
-
-// ── Download watchdog via storage listener ───────────────────────────────────
-// When UI (overlay/sidepanel) is closed, background ensures downloads continue.
-chrome.storage.onChanged.addListener(async (changes, area) => {
-  if (area !== 'local') return;
-  if (!changes[SESSION_KEY]) return;
-
-  const session = changes[SESSION_KEY].newValue;
-  const localSettings = await chrome.storage.local.get({
-    autoDownload: session?.settings?.autoDownload ?? session?.autoDownload ?? true,
-    autoDownloadMode: session?.settings?.autoDownloadMode ?? session?.autoDownloadMode ?? 'afterReady',
-    downloadFolder: session?.settings?.downloadFolder ?? session?.folder ?? 'meta-videos',
-    imageGenerationSelect: session?.settings?.imageGenerationSelect ?? session?.imageSelect ?? 'auto',
-    videoGenerationSelect: session?.settings?.videoGenerationSelect ?? session?.videoSelect ?? 'auto',
-    secondaryVideoGenerationSelect: session?.settings?.secondaryVideoGenerationSelect ?? session?.secondaryVideoSelect ?? 'auto',
-    customSelections: session?.settings?.customSelections ?? session?.customSelections ?? {}
-  });
-  const settings = { ...localSettings, ...(session || {}), ...(session?.settings || {}) };
-  settings.autoDownloadMode = normalizeAutoDownloadMode(settings.autoDownloadMode);
-  const autoDownloadEnabled = settings.autoDownload !== false && settings.autoDownload !== 'false';
-  if (!session?.active || !autoDownloadEnabled) {
-    setBadge('');
-    return;
-  }
-  if (session.downloadStartRequested !== true) {
-    setBadge('');
-    return;
-  }
-
-  // Get already-downloaded keys
-  const doneData = await chrome.storage.local.get(DONE_KEY);
-  const doneSet  = new Set(Array.isArray(doneData[DONE_KEY]) ? doneData[DONE_KEY] : []);
-
-  // Find selected outputs that are ready but not yet downloaded
-  const pending = [];
-  (session.prompts || []).forEach(prompt => {
-    if (!['ready','downloaded'].includes(prompt.status)) return;
-    const item = preferredOutputFor(prompt, settings);
-    if (item?.downloaded) return;
-    const key     = item ? downloadedKey(session, item) : null;
-    if (item && key && !doneSet.has(key)) pending.push({ item, key });
-  });
-
-  if (!pending.length) {
-    // All done
-    const anyActive = (session.prompts || []).some(p => !['ready','downloaded','failed','timeout','unrecoverable'].includes(p.status));
-    setBadge(anyActive ? '⏳' : '✓', anyActive ? '#F59E0B' : '#10B981');
-    return;
-  }
-
-  setBadge(`${pending.length}`, '#4361EE');
-
-  // ZIP mode waits for all selected outputs; individual mode streams as each is ready.
-  const mode = settings.autoDownloadMode;
-  const allSelectedReady = selectedComplete(session, settings);
-
-  if (mode === 'afterAllReadyZip' && !allSelectedReady) {
-    return; // wait for all selected outputs to finish
-  }
-
-  // ZIP mode needs an extension page to build a Blob. Record a visible
-  // session flag instead of silently waiting in the background.
-  if (mode === 'afterAllReadyZip') {
-    setBadge('ZIP', '#7C3AED');
-    if (!session.zipNeedsManager) {
-      await chrome.storage.local.set({
-        [SESSION_KEY]: {
-          ...session,
-          zipNeedsManager: true,
-          zipStatus: 'Open Download Manager to build ZIP.'
-        }
+async function ensureEngine() {
+  if (creatingOffscreen) return creatingOffscreen;
+  creatingOffscreen = (async () => {
+    const contexts = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [engineUrl] });
+    if (!contexts.length) {
+      await chrome.offscreen.createDocument({
+        url: 'offscreen.html', reasons: ['BLOBS'],
+        justification: 'Keep local image/video Blobs and stream the user-selected ZIP while the side panel is closed.',
       });
     }
-    return;
+  })();
+  try { await creatingOffscreen; } finally { creatingOffscreen = null; }
+}
+
+async function providerTab(tabId, provider) {
+  if (!Number.isInteger(tabId)) throw new Error('The generation tab is missing.');
+  const tab = await chrome.tabs.get(tabId);
+  if (!providerForUrl(tab.url) || (provider && providerForUrl(tab.url) !== provider)) {
+    throw new Error('The generation tab left Meta AI or Vibes AI. Reopen its original page before continuing.');
   }
+  return tab;
+}
 
-  const lockData = await chrome.storage.local.get('autoMetaCopy_downloadLock');
-  const lock = lockData['autoMetaCopy_downloadLock'];
-  if (lock && (Date.now() - lock.at) < 30000) {
-    return;
+async function focusProvider({ provider, tabId }) {
+  if (!PROVIDERS[provider]) throw new Error('Choose Meta AI or Vibes AI.');
+  let tab;
+  if (Number.isInteger(tabId)) {
+    try { tab = await providerTab(tabId, provider); } catch { /* Find an existing provider tab instead. */ }
   }
-  await chrome.storage.local.set({ autoMetaCopy_downloadLock: { at: Date.now(), owner: 'background' } });
+  if (!tab) tab = (await chrome.tabs.query({})).find(candidate => providerForUrl(candidate.url) === provider);
+  if (!tab) return chrome.tabs.create({ url: PROVIDERS[provider].home, active: true });
+  await chrome.windows.update(tab.windowId, { focused: true });
+  return chrome.tabs.update(tab.id, { active: true });
+}
 
-  // Trigger each pending download via chrome.downloads directly
-  for (const { item, key } of pending) {
-    const itemLock = await acquireDownloadSlot(key);
-    if (!itemLock.ok) continue;
-    const folder = settings.downloadFolder || session.folder || 'meta-videos';
-    const safeFolder = folder.replace(/[<>:"/\\|?*]+/g, '_').trim();
-    const ext  = item.type === 'video' ? 'mp4' : 'jpg';
-    const filename = `${safeFolder}/prompt ${Number(item.promptIndex) + 1} - ${item.type} ${Number(item.position || 1)}.${ext}`;
-
-    chrome.downloads.download({ url: item.src, filename, conflictAction: 'uniquify' }, (downloadId) => {
-      if (!chrome.runtime.lastError && downloadId !== undefined) {
-        // Mark as downloaded in storage
-        chrome.storage.local.get([DONE_KEY, SESSION_KEY], (data) => {
-          const done = new Set(Array.isArray(data[DONE_KEY]) ? data[DONE_KEY] : []);
-          done.add(key);
-          const updates = { [DONE_KEY]: Array.from(done) };
-
-          // Also update session.prompts[x].outputs[y].downloaded = true
-          const sess = data[SESSION_KEY];
-          if (sess?.prompts) {
-            sess.prompts = sess.prompts.map(p => {
-              if (Number(p.index) !== Number(item.promptIndex)) return p;
-              const outputs = (p.outputs || []).map(o => {
-                const oKey = downloadedKey(sess, o);
-                if (oKey === key) return { ...o, downloaded: true, downloadedAt: Date.now(), filename };
-                return o;
-              });
-              const allDone = outputs.length > 0 && outputs.every(o => o.downloaded);
-              return { ...p, outputs, status: allDone ? 'downloaded' : p.status };
-            });
-
-            // ── Signal core.js when ALL session downloads complete ──────────────
-            const allPromptsSubmitted = sess.allPromptsSubmitted;
-            const allSessionDone = allPromptsSubmitted && selectedDownloadsComplete(sess, settings);
-            if (allSessionDone && !sess.downloadsDone) {
-              sess.downloadsDone = true;
-              setBadge('✓', '#10B981');
-              console.log('[AutoMeta BG] downloadsDone=true — all downloads complete');
-            }
-
-            updates[SESSION_KEY] = sess;
-          }
-          chrome.storage.local.set(updates, () => { releaseDownloadSlot(itemLock); });
+async function handleEngine(message) {
+  switch (message.type) {
+    case 'state:publish':
+      await chrome.storage.local.set({ session: message.session });
+      return true;
+    case 'provider:ensure': {
+      if (!PROVIDERS[message.provider]) throw new Error('Unsupported generation provider.');
+      if (message.tabId != null) return providerTab(message.tabId, message.provider);
+      return chrome.tabs.create({ url: PROVIDERS[message.provider].home, active: true });
+    }
+    case 'provider:info':
+      return providerTab(message.tabId, message.provider);
+    case 'provider:send': {
+      const { tabId, provider, command } = message;
+      await providerTab(tabId, provider);
+      if (!command || !operationTypes.has(command.type)) throw new Error('Unsupported provider command.');
+      if (['operation:start', 'operation:status'].includes(command.type)) {
+        await updateOperations(async () => {
+          const key = `operation-owner:${command.operationId}`;
+          const owner = (await chrome.storage.session.get(key))[key];
+          if (owner != null && owner !== tabId) throw new Error('This operation belongs to a different tab.');
+          await chrome.storage.session.set({ [key]: tabId });
         });
-      } else {
-        releaseDownloadSlot(itemLock);
       }
-    });
-
-    // Small delay between downloads to avoid browser rate limiting
-    await new Promise(r => setTimeout(r, 600));
-  }
-  chrome.storage.local.remove('autoMetaCopy_downloadLock');
-});
-
-// ── Message listener ─────────────────────────────────────────────────────────
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.type === 'openDownloadsSettings') {
-    chrome.tabs.create({ url: 'chrome://settings/downloads' });
-    sendResponse({ success: true });
-    return false;
-  }
-
-  if (request.type === 'openFolderPicker') {
-    chrome.tabs.create({ url: chrome.runtime.getURL('folder-picker.html') }, (tab) => {
-      if (chrome.runtime.lastError) sendResponse({ success: false, error: chrome.runtime.lastError.message });
-      else sendResponse({ success: true, tabId: tab.id });
-    });
-    return true;
-  }
-
-  if (request.type === 'openDownloadManager') {
-    chrome.tabs.create({ url: chrome.runtime.getURL('download-manager.html') }, (tab) => {
-      if (chrome.runtime.lastError) sendResponse({ success: false, error: chrome.runtime.lastError.message });
-      else sendResponse({ success: true, tabId: tab.id });
-    });
-    return true;
-  }
-
-  if (request.type === 'openSidePanelPopup') {
-    if (sender.tab?.id) {
-      chrome.sidePanel.open({ tabId: sender.tab.id, windowId: sender.tab.windowId })
-        .then(() => sendResponse({ success: true }))
-        .catch((error) => sendResponse({ success: false, error: error?.message || 'Unable to open side panel' }));
-    } else {
-      sendResponse({ success: false, error: 'Tab ID missing' });
-      return false;
+      const response = await chrome.tabs.sendMessage(tabId, { ...command, target: 'content' });
+      if (!response?.ok) throw new Error(response?.error || 'The page automation did not respond. Refresh the provider page and try again.');
+      return response.data;
     }
-    return true;
+    case 'operation:read':
+      return (await chrome.storage.session.get(`operation:${message.operationId}`))[`operation:${message.operationId}`] || null;
+    case 'operation:clear': {
+      return updateOperations(async () => {
+        const state = await chrome.storage.session.get(null);
+        const keys = Object.keys(state).filter(key => key.startsWith('operation:') || key.startsWith('operation-owner:'));
+        await chrome.storage.session.remove(keys);
+        const local = await chrome.storage.local.get(null);
+        await chrome.storage.local.remove(Object.keys(local).filter(key => key.startsWith('operation:content:')));
+        return true;
+      });
+    }
+    default:
+      throw new Error('Unknown local worker request.');
   }
+}
 
-  if (request.type === 'downloadFile') {
-    if (!request.url) { sendResponse({ success: false, error: 'missing url' }); return false; }
-    chrome.downloads.download({ url: request.url, filename: request.filename || 'download.mp4', conflictAction: 'uniquify' }, (downloadId) => {
-      if (chrome.runtime.lastError) sendResponse({ success: false, error: chrome.runtime.lastError.message });
-      else sendResponse({ success: true, downloadId });
-    });
-    return true;
+async function handlePanel(message) {
+  if (message.type === 'tab:focus') return focusProvider(message);
+  if (!['status:get', 'run:start', 'run:pause', 'run:resume', 'run:stop', 'run:clear', 'run:export'].includes(message.type)) {
+    throw new Error('Unknown panel request.');
   }
+  await ensureEngine();
+  const response = await chrome.runtime.sendMessage({ ...message, target: 'engine' });
+  if (!response?.ok) throw new Error(response?.error || 'The local worker did not respond. Reopen the side panel.');
+  return response.data;
+}
 
-  if (request.type === 'clearBadge') {
-    setBadge('');
-    sendResponse({ success: true });
-    return false;
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.target !== 'background' || sender.id !== chrome.runtime.id) return;
+  const reply = promise => {
+    Promise.resolve(promise).then(data => sendResponse({ ok: true, data }), error => sendResponse({ ok: false, error: error.message }));
+  };
+  if (sender.tab && providerForUrl(sender.url)) {
+    if (message.type === 'panel:open') {
+      // Invoke immediately so the click's user gesture reaches Chrome's native panel API.
+      reply(chrome.sidePanel.open({ windowId: sender.tab.windowId }));
+      return true;
+    }
+    if (message.type === 'operation:checkpoint') {
+      reply(updateOperations(async () => {
+        const owner = (await chrome.storage.session.get(`operation-owner:${message.operationId}`))[`operation-owner:${message.operationId}`];
+        if (owner !== sender.tab.id) throw new Error('This operation belongs to a different tab.');
+        if (message.state?.id !== message.operationId) throw new Error('The checkpoint does not match its operation.');
+        // Clear and checkpoint writes share one queue so a late cancelled step cannot recreate deleted data.
+        await chrome.storage.local.set({ [`operation:content:${message.operationId}`]: message.state });
+        await chrome.storage.session.set({ [`operation:${message.operationId}`]: message.state });
+        return true;
+      }));
+      return true;
+    }
+    return;
   }
-
-  sendResponse({ success: false, error: `Unhandled message type: ${request.type || 'unknown'}` });
-  return false;
+  if (sender.url === engineUrl) reply(handleEngine(message));
+  else if (sender.url?.split('?')[0] === panelUrl) reply(handlePanel(message));
+  else return;
+  return true;
 });
+
+async function configurePanel() {
+  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  configurePanel().catch(console.error);
+  chrome.storage.local.remove(['nvidiaApiKey', 'geminiApiKey']).catch(console.error);
+});
+chrome.runtime.onStartup.addListener(() => configurePanel().catch(console.error));
+configurePanel().catch(console.error);

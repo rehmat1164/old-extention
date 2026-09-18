@@ -2,3 +2,14 @@
 .chrome-mete-run-profile/
 .chrome-mete-run-profile-debug/
 .chrome-mete-run-profile-debug2/
+
+node_modules/
+dist/
+test-results/
+.hoplite/artifacts/
+.hoplite/attachments/
+.hoplite/notes/
+.hoplite/logs/
+.hoplite/browser-profile/
+.hoplite/runtime/
+!/.hoplite/settings.json

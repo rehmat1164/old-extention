@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "scripts": {
+    "run": {
+      "enabled": true,
+      "command": "npm run build && npm run preview"
+    }
+  }
+}

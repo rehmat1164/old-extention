@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Local Vibes DOM fixture</title>
+<style>button{padding:8px}img,video{display:block;width:96px;height:170px}#grid,#frame-grid,#frames{display:flex;gap:12px}[role=dialog]{position:fixed;inset:35px;background:#eee;padding:25px;z-index:20;overflow:auto}#frame-left{width:65%}#preview{position:absolute;left:73%;top:90px}#advanced{inset:auto 100px 50px auto}textarea{width:500px;height:60px}#compose{margin-top:25px}</style></head>
+<body><main><section id="media"><button type="button">Upload media</button><div id="grid"></div></section>
+<section id="compose"><div id="frames"><div id="start-slot"></div><button type="button" aria-label="Add end frame">Add end frame</button></div>
+<textarea aria-label="Describe a video..." data-placeholder="Describe a video..."></textarea>
+<div><button type="button">Video</button><button type="button">Ingredients</button><button type="button">Start, end frame</button><button type="button" id="advanced-toggle" aria-expanded="false">Advanced</button><button type="button" aria-label="Send">Send</button></div></section></main>
+<script>
+  window.fixture = { submissions: 0, uploads: 0, removed: 0, uploadedNames: [], uploadedHashes: [], promptHistory: [], startFrames: [], videoSources: [], completionOrder: [], labelVariants: false, resolution: '480p', selected: null };
+  const realMedia = globalThis.meteFixtureOptions?.realMedia === true;
+  // Adapter tests control decode state; the unpacked-extension test uses real media.
+  if (!realMedia) Object.defineProperties(HTMLImageElement.prototype, {
+    naturalWidth: { get() { return 720; } }, naturalHeight: { get() { return 1280; } }, complete: { get() { return true; } },
+  });
+  if (!realMedia) Object.defineProperties(HTMLVideoElement.prototype, {
+    videoWidth: { get() { return this.dataset.ready ? 720 : 0; } },
+    videoHeight: { get() { return this.dataset.ready ? 1280 : 0; } },
+    readyState: { get() { return this.dataset.ready ? 4 : 0; } },
+    duration: { get() { return this.dataset.ready ? 5 : NaN; } },
+    error: { get() { return null; } }, currentSrc: { get() { return this.getAttribute('src') || ''; } },
+  });
+  const button = (label, action) => {
+    const node = document.createElement('button'); node.type = 'button'; node.textContent = label; node.setAttribute('aria-label', label); node.onclick = action; return node;
+  };
+  if (location.pathname === '/') {
+    const sections = [...document.querySelectorAll('main > section')];
+    sections.forEach(section => { section.hidden = true; });
+    const create = button('Create new', () => {
+      history.pushState({}, '', '/projects/fixture-project');
+      sections.forEach(section => { section.hidden = false; });
+      create.remove();
+    });
+    document.querySelector('main').prepend(create);
+  }
+  function image(name, src) { const node = document.createElement('img'); node.alt = name; node.src = src; return node; }
+  function attachStart(selected) {
+    const slot = document.querySelector('#start-slot'); slot.replaceChildren();
+    if (selected) {
+      slot.append(image(selected.alt, selected.getAttribute('src')));
+      slot.append(button('Remove start frame', () => { fixture.removed++; attachStart(null); }));
+    } else slot.append(button('Add start frame', openFrame));
+  }
+  attachStart(image('Old image', '/old-frame.png'));
+  function openFrame() {
+    const frame = document.createElement('div'); frame.setAttribute('role', 'dialog'); frame.setAttribute('aria-label', 'Select start frame'); frame.id = 'frame';
+    frame.innerHTML = '<h2>Select start frame</h2><div id="frame-left"><div><button type="button" aria-selected="true">This project</button><button type="button">Other projects</button></div><div id="frame-grid"></div></div><div id="preview">Start frame preview</div>';
+    frame.append(button('Upload', openUpload));
+    const add = button('Add to video', () => { attachStart(fixture.selected); frame.remove(); }); add.disabled = true; add.id = 'add-video';
+    frame.querySelector('#frame-left').append(add);
+    document.body.append(frame);
+    for (const existing of document.querySelectorAll('#grid img')) {
+      const thumbnail = image(existing.alt, existing.getAttribute('src'));
+      thumbnail.onclick = () => {
+        fixture.selected = thumbnail;
+        document.querySelector('#preview').replaceChildren(image(thumbnail.alt, thumbnail.getAttribute('src')));
+        document.querySelector('#add-video').disabled = false;
+      };
+      document.querySelector('#frame-grid').append(thumbnail);
+    }
+  }
+  function openUpload() {
+    const dialog = document.createElement('div'); dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-label', 'Upload images'); dialog.style.zIndex = '30';
+    dialog.innerHTML = '<h2>Upload images</h2><input type="file" accept="image/png,image/jpeg,image/webp">';
+    const upload = button('Upload', async () => {
+      fixture.uploads++;
+      const file = dialog.querySelector('input').files[0]; fixture.uploadedNames.push(file.name); fixture.uploadedType = file.type;
+      fixture.uploadedHashes.push([...new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()))].map(byte => byte.toString(16).padStart(2, '0')).join(''));
+      const src = realMedia ? URL.createObjectURL(file) : `/media/${encodeURIComponent(file.name)}`;
+      const thumbnail = image(file.name, src);
+      thumbnail.onclick = () => {
+        fixture.selected = thumbnail;
+        document.querySelector('#preview').replaceChildren(image(file.name, fixture.mismatchPreview ? '/different-image.png' : src));
+        document.querySelector('#add-video').disabled = false;
+      };
+      document.querySelector('#frame-grid').append(thumbnail);
+      const card = document.createElement('div'); card.setAttribute('data-asset-id', `upload-${fixture.uploads}`); card.append(image(file.name, src)); document.querySelector('#grid').append(card);
+      dialog.remove();
+    });
+    upload.disabled = true;
+    dialog.querySelector('input').onchange = () => { upload.disabled = false; };
+    dialog.append(upload); document.body.append(dialog);
+  }
+  document.querySelector('#advanced-toggle').onclick = () => {
+    const dialog = document.createElement('div'); dialog.id = 'advanced'; dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-label', 'Advanced settings');
+    for (const value of ['480p', '720p', '1080p']) {
+      const choice = button(value, () => {
+        fixture.resolution = value;
+        for (const peer of dialog.querySelectorAll('button')) peer.setAttribute('aria-pressed', String(peer.textContent === value));
+      });
+      choice.setAttribute('aria-pressed', String(value === fixture.resolution)); dialog.append(choice);
+    }
+    document.body.append(dialog); document.querySelector('#advanced-toggle').setAttribute('aria-expanded', 'true');
+  };
+  document.querySelector('textarea').onclick = () => { document.querySelector('#advanced')?.remove(); document.querySelector('#advanced-toggle').setAttribute('aria-expanded', 'false'); };
+  document.querySelector('[aria-label="Send"]').onclick = () => {
+    fixture.submissions++; fixture.prompt = document.querySelector('textarea').value; document.querySelector('textarea').value = '';
+    fixture.promptHistory.push(fixture.prompt);
+    const startFrame = document.querySelector('#start-slot img');
+    fixture.startFrames.push({ name: startFrame.alt, width: startFrame.naturalWidth, height: startFrame.naturalHeight });
+    const shape = startFrame.naturalWidth === startFrame.naturalHeight ? 'square' : 'portrait';
+    const batch = fixture.submissions;
+    for (let variant = 1; variant <= 4; variant++) {
+      const card = document.createElement('div'); card.setAttribute('data-asset-id', `batch-${batch}-variant-${variant}`); card.setAttribute('data-generation-id', `batch-${batch}`);
+      const thumbnail = image(fixture.labelVariants ? `Video ${variant}` : 'Video thumbnail', `/thumb-${batch}-${variant}.png`);
+      const video = document.createElement('video');
+      card.append(thumbnail, video); document.querySelector('#grid').append(card);
+      thumbnail.addEventListener('mouseover', () => {
+        if (!realMedia) { video.src = `https://vibes.ai/media/video-${batch}-${variant}.mp4`; return; }
+        setTimeout(async () => {
+          const response = await fetch(`/media/video-${batch}-${variant}.mp4?shape=${shape}`);
+          const url = URL.createObjectURL(await response.blob());
+          fixture.videoSources.push({ batch, variant, url });
+          video.addEventListener('loadeddata', () => fixture.completionOrder.push(variant), { once: true });
+          video.preload = 'auto'; video.src = url; video.load();
+        }, ({ 4: 100, 2: 300, 1: 500, 3: 700 })[variant]);
+      }, { once: true });
+      if (!realMedia) setTimeout(() => { video.dataset.ready = 'true'; fixture.completionOrder.push(variant); }, ({ 4: 100, 2: 200, 1: 300, 3: 400 })[variant]);
+    }
+  };
+</script></body></html>

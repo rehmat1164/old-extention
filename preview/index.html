@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Mete Run · Local test build</title>
+  <link rel="stylesheet" href="/preview/preview.css">
+</head>
+<body>
+  <main>
+    <section class="intro">
+      <div class="brand"><img src="/images/logo.png" alt="" width="48" height="48"><span>Mete Run <small>LOCAL TEST BUILD</small></span></div>
+      <h1>Three modes.<br>One calm workspace.</h1>
+      <p>Generate images with Meta AI. Turn your images into videos with Vibes. Keep the extension, workflow tracking and ZIP files on your own computer.</p>
+      <a class="download" href="/downloads/mete-run-local-test.zip" download>Download test extension ZIP <span aria-hidden="true">↘</span></a>
+      <p class="note"><a href="/downloads/mete-run-local-test.sha256" download>Download SHA-256 checksum</a> · Installation guide included inside the ZIP.</p>
+      <ol>
+        <li>Extract the ZIP into a permanent folder.</li>
+        <li>Open <code>chrome://extensions</code> and enable <strong>Developer mode</strong>.</li>
+        <li>Choose <strong>Load unpacked</strong> and select the extracted <code>mete-run-local</code> folder containing <code>manifest.json</code>.</li>
+        <li>Disable the old extension. Sign in to Meta AI and Vibes, then click the Mete Run extension icon to open the native sidebar.</li>
+      </ol>
+      <p class="note">This page previews the real sidebar UI, not live generation. The installed extension uses your signed-in Chrome tabs. Nothing has been pushed to GitHub.</p>
+      <p class="note">Generation still needs internet access. Prompts and source images go to Meta AI/Vibes when you start; no remote configuration or extra AI service is used.</p>
+      <p class="note">Chrome requires a click to open a native sidebar for the first time. The extension automatically offers an open button on Meta AI and Vibes; it does not inject a full panel into either website.</p>
+    </section>
+    <section class="preview" aria-label="Actual extension interface preview">
+      <div class="preview-title"><span class="dot"></span> SIDEBAR PREVIEW <a href="/sidepanel.html">Open full view ↗</a></div>
+      <iframe title="Mete Run sidebar" src="/sidepanel.html"></iframe>
+    </section>
+  </main>
+</body>
+</html>
